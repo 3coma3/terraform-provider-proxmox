@@ -28,8 +28,6 @@ func Provisioner() terraform.ResourceProvisioner {
 	}
 }
 
-var currentClient *pxapi.Client
-
 func applyFn(ctx context.Context) error {
 	data := ctx.Value(schema.ProvConfigDataKey).(*schema.ResourceData)
 	state := ctx.Value(schema.ProvRawStateKey).(*terraform.InstanceState)
@@ -41,22 +39,23 @@ func applyFn(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	vmr := pxapi.NewVmRef(vmID)
-	vmr.SetNode(targetNode)
-	client := currentClient
+	vm := pxapi.NewVm(vmID)
+	n, _ := pxapi.FindNode(targetNode)
+	vm.SetNode(n)
+	client := pxapi.GetClient()
 	if client == nil {
 		client, err = getClient(connInfo["pm_api_url"], connInfo["pm_user"], connInfo["pm_password"], connInfo["pm_tls_insecure"] == "true")
 		if err != nil {
 			return err
 		}
-		currentClient = client
+		client.Set()
 	}
 	switch act {
 	case "sshbackward":
-		return pxapi.RemoveSshForwardUsernet(vmr, client)
+		return vm.RemoveSshForwardUsernet()
 
 	case "reconnect":
-		err = pxapi.RemoveSshForwardUsernet(vmr, client)
+		err = vm.RemoveSshForwardUsernet()
 		if err != nil {
 			return err
 		}
@@ -64,7 +63,7 @@ func applyFn(ctx context.Context) error {
 		vmParams := map[string]interface{}{
 			"net1": data.Get("net1").(string),
 		}
-		_, err = client.SetVmConfig(vmr, vmParams)
+		_, err = vm.SetConfig(vmParams)
 		time.Sleep(10 * time.Second)
 		return err
 	default:

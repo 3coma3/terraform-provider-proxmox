@@ -29,7 +29,7 @@ func Provider() *schema.Provider {
 				Type:        schema.TypeString,
 				Required:    true,
 				DefaultFunc: schema.EnvDefaultFunc("PM_USER", nil),
-				Description: "username, maywith with @pam",
+				Description: "username, may begin with with @pam",
 			},
 			"pm_password": {
 				Type:        schema.TypeString,
@@ -58,7 +58,7 @@ func Provider() *schema.Provider {
 
 		ResourcesMap: map[string]*schema.Resource{
 			"proxmox_vm_qemu": resourceVmQemu(),
-			"proxmox_lxc": resourceLxc(),
+			"proxmox_vm_lxc":  resourceVmLxc(),
 			// TODO - storage_iso
 			// TODO - bridge
 			// TODO - vm_qemu_template
@@ -99,7 +99,8 @@ func getClient(pm_api_url string, pm_user string, pm_password string, pm_tls_ins
 
 func nextVmId(pconf *providerConfiguration) (nextId int, err error) {
 	pconf.Mutex.Lock()
-	pconf.MaxVMID, err = pconf.Client.GetNextID(pconf.MaxVMID + 1)
+	pconf.Client.Set()
+	pconf.MaxVMID, err = pxapi.GetNextVmId(pconf.MaxVMID + 1)
 	if err != nil {
 		return 0, err
 	}
@@ -124,8 +125,8 @@ func pmParallelEnd(pconf *providerConfiguration) {
 	pconf.Mutex.Unlock()
 }
 
-func resourceId(targetNode string, resType string, vmId int) string {
-	return fmt.Sprintf("%s/%s/%d", targetNode, resType, vmId)
+func resourceId(vm *pxapi.Vm) string {
+	return fmt.Sprintf("%s/%s/%d", vm.Node().Name(), vm.Type(), vm.Id())
 }
 
 var rxRsId = regexp.MustCompile("([^/]+)/([^/]+)/(\\d+)")

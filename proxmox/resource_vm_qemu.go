@@ -3,8 +3,6 @@ package proxmox
 import (
 	"fmt"
 	"log"
-	"math"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -48,7 +46,7 @@ func resourceVmQemu() *schema.Resource {
 				Default:  true,
 			},
 			"agent": {
-				Type:     schema.TypeInt,
+				Type:     schema.TypeString,
 				Optional: true,
 				Default:  0,
 			},
@@ -62,7 +60,7 @@ func resourceVmQemu() *schema.Resource {
 				Optional: true,
 				ForceNew: true,
 			},
-			"qemu_os": {
+			"ostype": {
 				Type:     schema.TypeString,
 				Optional: true,
 				Default:  "l26",
@@ -88,10 +86,9 @@ func resourceVmQemu() *schema.Resource {
 				Optional: true,
 				Default:  1,
 			},
-			"network": &schema.Schema{
-				Type:          schema.TypeSet,
-				Optional:      true,
-				ConflictsWith: []string{"nic", "bridge", "vlan", "mac"},
+			"net": &schema.Schema{
+				Type:     schema.TypeSet,
+				Optional: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": &schema.Schema{
@@ -148,9 +145,8 @@ func resourceVmQemu() *schema.Resource {
 				},
 			},
 			"disk": &schema.Schema{
-				Type:          schema.TypeSet,
-				Optional:      true,
-				ConflictsWith: []string{"disk_gb", "storage", "storage_type"},
+				Type:     schema.TypeSet,
+				Optional: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": &schema.Schema{
@@ -203,68 +199,11 @@ func resourceVmQemu() *schema.Resource {
 					},
 				},
 			},
-			// Deprecated single disk config.
-			"disk_gb": {
-				Type:       schema.TypeFloat,
-				Deprecated: "Use `disk.size` instead",
-				Optional:   true,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					// bigger ok
-					oldf, _ := strconv.ParseFloat(old, 64)
-					newf, _ := strconv.ParseFloat(new, 64)
-					return oldf >= newf
-				},
-			},
-			"storage": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `disk.storage` instead",
-				Optional:   true,
-			},
-			"storage_type": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `disk.type` instead",
-				Optional:   true,
-				ForceNew:   false,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					if new == "" {
-						return true // empty template ok
-					}
-					return strings.TrimSpace(old) == strings.TrimSpace(new)
-				},
-			},
-			// Deprecated single nic config.
-			"nic": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `network` instead",
-				Optional:   true,
-			},
-			"bridge": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `network.bridge` instead",
-				Optional:   true,
-			},
-			"vlan": {
-				Type:       schema.TypeInt,
-				Deprecated: "Use `network.tag` instead",
-				Optional:   true,
-				Default:    -1,
-			},
-			"mac": {
-				Type:       schema.TypeString,
-				Deprecated: "Use `network.macaddr` to access the auto generated MAC address",
-				Optional:   true,
-				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-					if new == "" {
-						return true // macaddr auto-generates and its ok
-					}
-					return strings.TrimSpace(old) == strings.TrimSpace(new)
-				},
-			},
-			"os_type": {
+			"preprovision_ostype": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"os_network_config": {
+			"preprovision_netconfig": {
 				Type:     schema.TypeString,
 				Optional: true,
 				ForceNew: true,
@@ -340,7 +279,7 @@ func resourceVmQemu() *schema.Resource {
 				Type:          schema.TypeBool,
 				Optional:      true,
 				Default:       true,
-				ConflictsWith: []string{"ssh_forward_ip", "ssh_user", "ssh_private_key", "os_type", "os_network_config"},
+				ConflictsWith: []string{"ssh_forward_ip", "ssh_user", "ssh_private_key", "preprovision_ostype", "preprovision_netconfig"},
 			},
 		},
 	}
@@ -351,7 +290,11 @@ var rxIPconfig = regexp.MustCompile("ip6?=([0-9a-fA-F:\\.]+)")
 func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-	client := pconf.Client
+
+	// TODO: check interaction with mutex
+	// beware this might mean needing to go back to explicit client passing
+	pconf.Client.Set()
+
 	vmName := d.Get("name").(string)
 	networks := d.Get("network").(*schema.Set)
 	qemuNetworks := DevicesSetToMap(networks)
@@ -359,16 +302,16 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	qemuDisks := DevicesSetToMap(disks)
 
 	config := pxapi.ConfigQemu{
-		Name:         vmName,
-		Description:  d.Get("desc").(string),
-		Onboot:       d.Get("onboot").(bool),
-		Agent:        d.Get("agent").(int),
-		Memory:       d.Get("memory").(int),
-		QemuCores:    d.Get("cores").(int),
-		QemuSockets:  d.Get("sockets").(int),
-		QemuOs:       d.Get("qemu_os").(string),
-		QemuNetworks: qemuNetworks,
-		QemuDisks:    qemuDisks,
+		Name:        vmName,
+		Description: d.Get("desc").(string),
+		Onboot:      d.Get("onboot").(bool),
+		Agent:       d.Get("agent").(string),
+		Ostype:      d.Get("ostype").(string),
+		Memory:      d.Get("memory").(int),
+		Cores:       d.Get("cores").(int),
+		Sockets:     d.Get("sockets").(int),
+		Net:         devicesSetToMap(d.Get("net").(*schema.Set)),
+		Disk:        qemuDisks,
 		// Cloud-init.
 		CIuser:       d.Get("ciuser").(string),
 		CIpassword:   d.Get("cipassword").(string),
@@ -377,50 +320,47 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 		Sshkeys:      d.Get("sshkeys").(string),
 		Ipconfig0:    d.Get("ipconfig0").(string),
 		Ipconfig1:    d.Get("ipconfig1").(string),
-		// Deprecated single disk config.
-		Storage:  d.Get("storage").(string),
-		DiskSize: d.Get("disk_gb").(float64),
-		// Deprecated single nic config.
-		QemuNicModel: d.Get("nic").(string),
-		QemuBrige:    d.Get("bridge").(string),
-		QemuVlanTag:  d.Get("vlan").(int),
-		QemuMacAddr:  d.Get("mac").(string),
 	}
 	log.Print("[DEBUG] checking for duplicate name")
-	dupVmr, _ := client.GetVmRefByName(vmName)
+	dupVm, _ := pxapi.FindVm(vmName)
 
 	forceCreate := d.Get("force_create").(bool)
 	targetNode := d.Get("target_node").(string)
 
-	if dupVmr != nil && forceCreate {
+	if dupVm != nil && forceCreate {
 		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=false to recycle", vmName, dupVmr.VmId())
-	} else if dupVmr != nil && dupVmr.Node() != targetNode {
+		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=false to recycle", vmName, dupVm.Id())
+	} else if dupVm != nil && dupVm.Node().Name() != targetNode {
 		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", vmName, dupVmr.VmId(), dupVmr.Node())
+		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", vmName, dupVm.Id(), dupVm.Node())
 	}
 
-	vmr := dupVmr
+	vm := dupVm
 
-	if vmr == nil {
+	if vm == nil {
 		// get unique id
 		nextid, err := nextVmId(pconf)
 		if err != nil {
 			pmParallelEnd(pconf)
 			return err
 		}
-		vmr = pxapi.NewVmRef(nextid)
+		vm = pxapi.NewVm(nextid)
 
-		vmr.SetNode(targetNode)
+		n, _ := pxapi.FindNode(targetNode)
+		vm.SetNode(n)
+
 		// check if ISO or clone
 		if d.Get("clone").(string) != "" {
-			sourceVmr, err := client.GetVmRefByName(d.Get("clone").(string))
+			sourceVm, err := pxapi.FindVm(d.Get("clone").(string))
 			if err != nil {
 				pmParallelEnd(pconf)
 				return err
 			}
 			log.Print("[DEBUG] cloning VM")
-			err = config.CloneVm(sourceVmr, vmr, client)
+
+			cloneParams := map[string]interface{}{}
+
+			_, err = sourceVm.Clone(vm.Id(), cloneParams)
 			if err != nil {
 				pmParallelEnd(pconf)
 				return err
@@ -429,15 +369,16 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 			// give sometime to proxmox to catchup
 			time.Sleep(5 * time.Second)
 
-			err = prepareDiskSize(client, vmr, qemuDisks)
+			err = prepareDiskSize(vm, qemuDisks)
 			if err != nil {
 				pmParallelEnd(pconf)
 				return err
 			}
 
 		} else if d.Get("iso").(string) != "" {
-			config.QemuIso = d.Get("iso").(string)
-			err := config.CreateVm(vmr, client)
+			log.Print("[DEBUG] create VM from iso at node " + vm.Node().Name() + ", vmid " + strconv.Itoa(vm.Id()) + " type " + vm.Type())
+			config.Iso = d.Get("iso").(string)
+			err := config.CreateVm(vm)
 			if err != nil {
 				pmParallelEnd(pconf)
 				return err
@@ -446,11 +387,11 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 			return fmt.Errorf("Either clone or iso must be set")
 		}
 	} else {
-		log.Printf("[DEBUG] recycling VM vmId: %d", vmr.VmId())
+		log.Printf("[DEBUG] recycling VM: %d", vm.Id())
 
-		client.StopVm(vmr)
+		vm.Stop()
 
-		err := config.UpdateConfig(vmr, client)
+		err := config.UpdateConfig(vm)
 		if err != nil {
 			pmParallelEnd(pconf)
 			return err
@@ -459,31 +400,31 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 		// give sometime to proxmox to catchup
 		time.Sleep(5 * time.Second)
 
-		err = prepareDiskSize(client, vmr, qemuDisks)
+		err = prepareDiskSize(vm, qemuDisks)
 		if err != nil {
 			pmParallelEnd(pconf)
 			return err
 		}
 	}
-	d.SetId(resourceId(targetNode, "qemu", vmr.VmId()))
+	d.SetId(resourceId(vm))
 
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
 
 	log.Print("[DEBUG] starting VM")
-	_, err := client.StartVm(vmr)
+	_, err := vm.Start()
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
 	}
 
-	err = initConnInfo(d, pconf, client, vmr, &config)
+	err = initConnInfo(d, pconf, vm, &config)
 	if err != nil {
 		return err
 	}
 
 	// Apply pre-provision if enabled.
-	preprovision(d, pconf, client, vmr, true)
+	preprovision(d, pconf, vm, true)
 
 	return nil
 }
@@ -491,15 +432,17 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-	client := pconf.Client
+
+	pconf.Client.Set()
+
 	_, _, vmID, err := parseResourceId(d.Id())
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
 	}
-	vmr := pxapi.NewVmRef(vmID)
-	_, err = client.GetVmInfo(vmr)
-	if err != nil {
+
+	vm := pxapi.NewVm(vmID)
+	if err = vm.Check(); err != nil {
 		pmParallelEnd(pconf)
 		return err
 	}
@@ -509,16 +452,16 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 	qemuNetworks := DevicesSetToMap(configNetworksSet)
 
 	config := pxapi.ConfigQemu{
-		Name:         d.Get("name").(string),
-		Description:  d.Get("desc").(string),
-		Onboot:       d.Get("onboot").(bool),
-		Agent:        d.Get("agent").(int),
-		Memory:       d.Get("memory").(int),
-		QemuCores:    d.Get("cores").(int),
-		QemuSockets:  d.Get("sockets").(int),
-		QemuOs:       d.Get("qemu_os").(string),
-		QemuNetworks: qemuNetworks,
-		QemuDisks:    qemuDisks,
+		Name:        d.Get("name").(string),
+		Description: d.Get("desc").(string),
+		Onboot:      d.Get("onboot").(bool),
+		Agent:       d.Get("agent").(string),
+		Memory:      d.Get("memory").(int),
+		Cores:       d.Get("cores").(int),
+		Sockets:     d.Get("sockets").(int),
+		Ostype:      d.Get("ostype").(string),
+		Net:         devicesSetToMap(d.Get("net").(*schema.Set)),
+		Disk:        qemuDisks,
 		// Cloud-init.
 		CIuser:       d.Get("ciuser").(string),
 		CIpassword:   d.Get("cipassword").(string),
@@ -527,17 +470,9 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 		Sshkeys:      d.Get("sshkeys").(string),
 		Ipconfig0:    d.Get("ipconfig0").(string),
 		Ipconfig1:    d.Get("ipconfig1").(string),
-		// Deprecated single disk config.
-		Storage:  d.Get("storage").(string),
-		DiskSize: d.Get("disk_gb").(float64),
-		// Deprecated single nic config.
-		QemuNicModel: d.Get("nic").(string),
-		QemuBrige:    d.Get("bridge").(string),
-		QemuVlanTag:  d.Get("vlan").(int),
-		QemuMacAddr:  d.Get("mac").(string),
 	}
 
-	err = config.UpdateConfig(vmr, client)
+	err = config.UpdateConfig(vm)
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
@@ -546,28 +481,28 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
 
-	prepareDiskSize(client, vmr, qemuDisks)
+	prepareDiskSize(vm, qemuDisks)
 
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
 
 	// Start VM only if it wasn't running.
-	vmState, err := client.GetVmState(vmr)
-	if err == nil && vmState["status"] == "stopped" {
+	vmStatus, err := vm.GetStatus()
+	if err == nil && vmStatus["status"] == "stopped" {
 		log.Print("[DEBUG] starting VM")
-		_, err = client.StartVm(vmr)
+		_, err = vm.Start()
 	} else if err != nil {
 		pmParallelEnd(pconf)
 		return err
 	}
 
-	err = initConnInfo(d, pconf, client, vmr, &config)
+	err = initConnInfo(d, pconf, vm, &config)
 	if err != nil {
 		return err
 	}
 
 	// Apply pre-provision if enabled.
-	preprovision(d, pconf, client, vmr, false)
+	preprovision(d, pconf, vm, false)
 
 	// give sometime to bootup
 	time.Sleep(9 * time.Second)
@@ -577,34 +512,37 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-	client := pconf.Client
-	_, _, vmID, err := parseResourceId(d.Id())
+	pconf.Client.Set()
+
+	_, _, vmId, err := parseResourceId(d.Id())
 	if err != nil {
 		pmParallelEnd(pconf)
 		d.SetId("")
 		return err
 	}
-	vmr := pxapi.NewVmRef(vmID)
-	_, err = client.GetVmInfo(vmr)
+
+	vm := pxapi.NewVm(vmId)
+	if err = vm.Check(); err != nil {
+		pmParallelEnd(pconf)
+		return err
+	}
+
+	config, err := pxapi.NewConfigQemuFromApi(vm)
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
 	}
-	config, err := pxapi.NewConfigQemuFromApi(vmr, client)
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
-	}
-	d.SetId(resourceId(vmr.Node(), "qemu", vmr.VmId()))
-	d.Set("target_node", vmr.Node())
+
+	d.SetId(resourceId(vm))
+	d.Set("target_node", vm.Node().Name())
 	d.Set("name", config.Name)
 	d.Set("desc", config.Description)
 	d.Set("onboot", config.Onboot)
 	d.Set("agent", config.Agent)
 	d.Set("memory", config.Memory)
-	d.Set("cores", config.QemuCores)
-	d.Set("sockets", config.QemuSockets)
-	d.Set("qemu_os", config.QemuOs)
+	d.Set("cores", config.Cores)
+	d.Set("sockets", config.Sockets)
+	d.Set("ostype", config.Ostype)
 	// Cloud-init.
 	d.Set("ciuser", config.CIuser)
 	d.Set("cipassword", config.CIpassword)
@@ -613,23 +551,16 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 	d.Set("sshkeys", config.Sshkeys)
 	d.Set("ipconfig0", config.Ipconfig0)
 	d.Set("ipconfig1", config.Ipconfig1)
+
 	// Disks.
 	configDisksSet := d.Get("disk").(*schema.Set)
 	activeDisksSet := UpdateDevicesSet(configDisksSet, config.QemuDisks)
 	d.Set("disk", activeDisksSet)
+
 	// Networks.
 	configNetworksSet := d.Get("network").(*schema.Set)
 	activeNetworksSet := UpdateDevicesSet(configNetworksSet, config.QemuNetworks)
 	d.Set("network", activeNetworksSet)
-	// Deprecated single disk config.
-	d.Set("storage", config.Storage)
-	d.Set("disk_gb", config.DiskSize)
-	d.Set("storage_type", config.StorageType)
-	// Deprecated single nic config.
-	d.Set("nic", config.QemuNicModel)
-	d.Set("bridge", config.QemuBrige)
-	d.Set("vlan", config.QemuVlanTag)
-	d.Set("mac", config.QemuMacAddr)
 
 	pmParallelEnd(pconf)
 	return nil
@@ -638,28 +569,40 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
 func resourceVmQemuDelete(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-	client := pconf.Client
-	vmId, _ := strconv.Atoi(path.Base(d.Id()))
-	vmr := pxapi.NewVmRef(vmId)
-	_, err := client.StopVm(vmr)
+
+	pconf.Client.Set()
+
+	_, _, vmId, err := parseResourceId(d.Id())
+	if err != nil {
+		pmParallelEnd(pconf)
+		d.SetId("")
+		return err
+	}
+
+	vm := pxapi.NewVm(vmId)
+	if err = vm.Check(); err != nil {
+		pmParallelEnd(pconf)
+		return err
+	}
+
+	_, err = vm.Stop()
 	if err != nil {
 		pmParallelEnd(pconf)
 		return err
 	}
 	// give sometime to proxmox to catchup
 	time.Sleep(2 * time.Second)
-	_, err = client.DeleteVm(vmr)
+	_, err = vm.Delete()
 	pmParallelEnd(pconf)
 	return err
 }
 
 // Increase disk size if original disk was smaller than new disk.
 func prepareDiskSize(
-	client *pxapi.Client,
-	vmr *pxapi.VmRef,
-	diskConfMap pxapi.QemuDevices,
+	vm *pxapi.Vm,
+	diskConfMap pxapi.VmDevices,
 ) error {
-	clonedConfig, err := pxapi.NewConfigQemuFromApi(vmr, client)
+	clonedConfig, err := pxapi.NewConfigQemuFromApi(vm)
 	if err != nil {
 		return err
 	}
@@ -669,20 +612,19 @@ func prepareDiskSize(
 
 		diskSize := diskSizeGB(diskConf["size"])
 
-		if _, diskExists := clonedConfig.QemuDisks[diskID]; !diskExists {
+		if _, diskExists := clonedConfig.Disk[diskID]; !diskExists {
 			return err
 		}
 
-		clonedDiskSize := diskSizeGB(clonedConfig.QemuDisks[diskID]["size"])
+		clonedDiskSize := diskSizeGB(clonedConfig.Disk[diskID]["size"])
 
 		if err != nil {
 			return err
 		}
 
-		diffSize := int(math.Ceil(diskSize - clonedDiskSize))
 		if diskSize > clonedDiskSize {
 			log.Print("[DEBUG] resizing disk " + diskName)
-			_, err = client.ResizeQemuDisk(vmr, diskName, diffSize)
+			_, err = vm.ResizeDisk(diskName, strconv.Itoa(int(diskSize)))
 			if err != nil {
 				return err
 			}
@@ -708,7 +650,7 @@ func diskSizeGB(dcSize interface{}) float64 {
 // which will be sent to Proxmox API.
 func DevicesSetToMap(devicesSet *schema.Set) pxapi.QemuDevices {
 
-	devicesMap := pxapi.QemuDevices{}
+	devicesMap := pxapi.VmDevices{}
 
 	for _, set := range devicesSet.List() {
 		setMap, isMap := set.(map[string]interface{})
@@ -724,7 +666,7 @@ func DevicesSetToMap(devicesSet *schema.Set) pxapi.QemuDevices {
 // TODO: Maybe it's better to create a new Set instead add to current one.
 func UpdateDevicesSet(
 	devicesSet *schema.Set,
-	devicesMap pxapi.QemuDevices,
+	devicesMap pxapi.VmDevices,
 ) *schema.Set {
 
 	configDevicesMap := DevicesSetToMap(devicesSet)
@@ -770,9 +712,9 @@ func UpdateDevicesSet(
 // So to prevent Terraform doing unnecessary diffs, this function reads default values
 // from Terraform itself, and fill empty fields.
 func updateDevicesDefaults(
-	activeDevicesMap pxapi.QemuDevices,
-	configDevicesMap pxapi.QemuDevices,
-) pxapi.QemuDevices {
+	activeDevicesMap pxapi.VmDevices,
+	configDevicesMap pxapi.VmDevices,
+) pxapi.VmDevices {
 
 	for deviceID, deviceConf := range configDevicesMap {
 		if _, ok := activeDevicesMap[deviceID]; !ok {
@@ -790,8 +732,7 @@ func updateDevicesDefaults(
 func initConnInfo(
 	d *schema.ResourceData,
 	pconf *providerConfiguration,
-	client *pxapi.Client,
-	vmr *pxapi.VmRef,
+	vm *pxapi.Vm,
 	config *pxapi.ConfigQemu) error {
 
 	sshPort := "22"
@@ -808,7 +749,7 @@ func initConnInfo(
 		}
 	} else {
 		log.Print("[DEBUG] setting up SSH forward")
-		sshPort, err = pxapi.SshForwardUsernet(vmr, client)
+		sshPort, err = vm.SshForwardUsernet()
 		if err != nil {
 			pmParallelEnd(pconf)
 			return err
@@ -818,6 +759,8 @@ func initConnInfo(
 
 	// Done with proxmox API, end parallel and do the SSH things
 	pmParallelEnd(pconf)
+
+	client := pxapi.GetClient()
 
 	d.SetConnInfo(map[string]string{
 		"type":            "ssh",
@@ -837,8 +780,7 @@ func initConnInfo(
 func preprovision(
 	d *schema.ResourceData,
 	pconf *providerConfiguration,
-	client *pxapi.Client,
-	vmr *pxapi.VmRef,
+	vm *pxapi.Vm,
 	systemPreProvision bool,
 ) error {
 

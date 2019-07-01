@@ -1,4 +1,5 @@
-.idea
-
 *~*
 *.bak
+*.vim
+.terraform
+crash.log
