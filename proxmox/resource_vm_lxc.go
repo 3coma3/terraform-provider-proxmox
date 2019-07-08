@@ -1,34 +1,30 @@
 package proxmox
 
 import (
+	"encoding/json"
 	pxapi "github.com/3coma3/proxmox-api-go/proxmox"
 	"github.com/hashicorp/terraform/helper/schema"
+	"log"
+	"reflect"
+	"strconv"
 )
 
-func resourceLxc() *schema.Resource {
+func resourceVmLxc() *schema.Resource {
 	*pxapi.Debug = true
 	return &schema.Resource{
-		Create: resourceLxcCreate,
-		Read:   resourceLxcRead,
-		Update: resourceLxcUpdate,
-		Delete: resourceLxcDelete,
+		Create: resourceVmLxcCreate,
+		Read:   resourceVmLxcRead,
+		Update: resourceVmLxcUpdate,
+		Delete: ResourceVmDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
 
 		Schema: map[string]*schema.Schema{
-			"ostemplate": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
 			"arch": {
 				Type:     schema.TypeString,
 				Optional: true,
 				Default:  "amd64",
-			},
-			"bwlimit": {
-				Type:     schema.TypeInt,
-				Optional: true,
 			},
 			"cmode": {
 				Type:     schema.TypeString,
@@ -40,14 +36,16 @@ func resourceLxc() *schema.Resource {
 				Optional: true,
 				Default:  true,
 			},
+			"clone": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				ForceNew:      true,
+				ConflictsWith: []string{"ostemplate"},
+			},
 			"cores": {
 				Type:     schema.TypeInt,
 				Optional: true,
-			},
-			"cpulimit": {
-				Type:     schema.TypeInt,
-				Optional: true,
-				Default:  0,
+				Default:  1,
 			},
 			"cpuunits": {
 				Type:     schema.TypeInt,
@@ -58,47 +56,7 @@ func resourceLxc() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"features": {
-				Type:     schema.TypeSet,
-				Optional: true,
-				Elem: &schema.Resource{
-					Schema: map[string]*schema.Schema{
-						"fuse": {
-							Type:     schema.TypeBool,
-							Optional: true,
-						},
-						"keyctl": {
-							Type:     schema.TypeBool,
-							Optional: true,
-						},
-						"mount": {
-							Type:     schema.TypeString,
-							Optional: true,
-						},
-						"nesting": {
-							Type:     schema.TypeBool,
-							Optional: true,
-						},
-					},
-				},
-			},
-			"force": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"hookscript": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
 			"hostname": {
-				Type:     schema.TypeString,
-				Optional: true,
-			},
-			"ignore_unpack_errors": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
-			"lock": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
@@ -107,7 +65,7 @@ func resourceLxc() *schema.Resource {
 				Optional: true,
 				Default:  512,
 			},
-			"mountpoint": {
+			"mp": {
 				Type:     schema.TypeSet,
 				Optional: true,
 				Elem: &schema.Resource{
@@ -140,12 +98,17 @@ func resourceLxc() *schema.Resource {
 							Type:     schema.TypeBool,
 							Optional: true,
 						},
+						"ro": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
 						"shared": {
 							Type:     schema.TypeBool,
 							Optional: true,
 						},
 						"size": {
-							Type:     schema.TypeInt,
+							Type:     schema.TypeString,
 							Optional: true,
 						},
 					},
@@ -155,7 +118,7 @@ func resourceLxc() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"network": {
+			"net": {
 				Type:     schema.TypeSet,
 				Optional: true,
 				Elem: &schema.Resource{
@@ -185,7 +148,7 @@ func resourceLxc() *schema.Resource {
 							Optional: true,
 						},
 						"hwaddr": {
-							Type:     schema.TypeBool,
+							Type:     schema.TypeString,
 							Optional: true,
 						},
 						"ip": {
@@ -228,78 +191,98 @@ func resourceLxc() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
+			"ostemplate": {
+				Type:          schema.TypeString,
+				Optional:      true,
+				ConflictsWith: []string{"clone"},
+				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+					return d.Id() != ""
+				},
+			},
 			"password": {
 				Type:     schema.TypeString,
 				Optional: true,
-			},
-			"pool": {
-				Type:     schema.TypeString,
-				Optional: true,
+				DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+					return d.Id() != ""
+				},
 			},
 			"protection": {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
 			},
-			"restore": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
 			"rootfs": {
-				Type:     schema.TypeString,
-				Optional: true,
+				Type:     schema.TypeSet,
+				Required: true,
+				MaxItems: 1,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"storage": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+						"size": {
+							Type:     schema.TypeString,
+							Required: true,
+						},
+						"acl": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
+						"quota": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
+						"replicate": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
+						"ro": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
+						"shared": {
+							Type:     schema.TypeBool,
+							Optional: true,
+							Default:  false,
+						},
+					},
+				},
 			},
 			"searchdomain": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"ssh_public_keys": {
+			"start": {
 				Type:     schema.TypeString,
 				Optional: true,
-			},
-			"start": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Default:  false,
 			},
 			"startup": {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"storage": {
+			"sshkeys": {
 				Type:     schema.TypeString,
 				Optional: true,
-				Default:  "local",
 			},
 			"swap": {
 				Type:     schema.TypeInt,
 				Optional: true,
 				Default:  512,
 			},
-			"template": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
 			"tty": {
 				Type:     schema.TypeInt,
 				Optional: true,
 				Default:  2,
 			},
-			"unique": {
-				Type:     schema.TypeBool,
-				Optional: true,
-			},
 			"unprivileged": {
 				Type:     schema.TypeBool,
 				Optional: true,
 				Default:  false,
-			},
-			"unused": {
-				Type:     schema.TypeList,
-				Optional: true,
-				Elem: &schema.Schema{
-					Type: schema.TypeString,
-				},
 			},
 			"target_node": {
 				Type:     schema.TypeString,
@@ -310,177 +293,257 @@ func resourceLxc() *schema.Resource {
 	}
 }
 
-func resourceLxcCreate(d *schema.ResourceData, meta interface{}) error {
+func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
+	var (
+		vmid   int
+		vm     *pxapi.Vm
+		node   *pxapi.Node
+		config *pxapi.ConfigLxc
+	)
+
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-	client := pconf.Client
-	vmName := d.Get("hostname").(string)
 
-	config := pxapi.NewConfigLxc()
+	// TODO: check interaction with mutex
+	// beware this might mean needing to go back to explicit client passing
+	pconf.Client.Set()
+
+	if vmid, err = nextVmId(pconf); err != nil {
+		goto End
+	}
+	vm = pxapi.NewVm(vmid)
+
+	if node, err = pxapi.FindNode(d.Get("target_node").(string)); err != nil {
+		goto End
+	}
+	vm.SetNode(node)
+
+	config = pxapi.NewConfigLxc()
+
+	config.Hostname = d.Get("hostname").(string)
 	config.Ostemplate = d.Get("ostemplate").(string)
 	config.Arch = d.Get("arch").(string)
-	config.BWLimit = d.Get("bwlimit").(int)
-	config.CMode = d.Get("cmode").(string)
+	config.Cmode = d.Get("cmode").(string)
 	config.Console = d.Get("console").(bool)
 	config.Cores = d.Get("cores").(int)
-	config.CPULimit = d.Get("cpulimit").(int)
-	config.CPUUnits = d.Get("cpuunits").(int)
+	config.Cpuunits = d.Get("cpuunits").(int)
 	config.Description = d.Get("description").(string)
-	features := d.Get("features").(*schema.Set)
-	featureSetList := features.List()
-	if len(featureSetList) > 0 {
-		// only apply the first feature set,
-		// because proxmox api only allows one feature set
-		config.Features = featureSetList[0].(map[string]interface{})
-	}
-	config.Force = d.Get("force").(bool)
-	config.Hookscript = d.Get("hookscript").(string)
-	config.Hostname = vmName
-	config.IgnoreUnpackErrors = d.Get("ignore_unpack_errors").(bool)
-	config.Lock = d.Get("lock").(string)
 	config.Memory = d.Get("memory").(int)
-	// proxmox api allows multiple mountpoint sets,
-	// having a unique 'id' parameter foreach set
-	mountpoints := d.Get("mountpoint").(*schema.Set)
-	lxcMountpoints := DevicesSetToMap(mountpoints)
-	config.Mountpoints = lxcMountpoints
 	config.Nameserver = d.Get("nameserver").(string)
-	// proxmox api allows multiple network sets,
-	// having a unique 'id' parameter foreach set
-	networks := d.Get("network").(*schema.Set)
-	lxcNetworks := DevicesSetToMap(networks)
-	config.Networks = lxcNetworks
-	config.OnBoot = d.Get("onboot").(bool)
-	config.OsType = d.Get("ostype").(string)
+	config.Onboot = d.Get("onboot").(bool)
+	config.Ostype = d.Get("ostype").(string)
+	config.Ostemplate = d.Get("ostemplate").(string)
 	config.Password = d.Get("password").(string)
-	config.Pool = d.Get("pool").(string)
 	config.Protection = d.Get("protection").(bool)
-	config.Restore = d.Get("restore").(bool)
-	config.RootFs = d.Get("rootfs").(string)
-	config.SearchDomain = d.Get("searchdomain").(string)
-	config.SSHPublicKeys = d.Get("ssh_public_keys").(string)
-	config.Start = d.Get("start").(bool)
+	config.Searchdomain = d.Get("searchdomain").(string)
 	config.Startup = d.Get("startup").(string)
-	config.Storage = d.Get("storage").(string)
+	config.Sshkeys = d.Get("sshkeys").(string)
+	config.Startup = d.Get("startup").(string)
 	config.Swap = d.Get("swap").(int)
-	config.Template = d.Get("template").(bool)
 	config.Tty = d.Get("tty").(int)
-	config.Unique = d.Get("unique").(bool)
 	config.Unprivileged = d.Get("unprivileged").(bool)
-	// proxmox api allows to specify unused volumes
-	// even if it is recommended not to change them manually
-	unusedVolumes := d.Get("unused").([]interface{})
-	var volumes []string
-	for _, v := range unusedVolumes {
-		volumes = append(volumes, v.(string))
-	}
-	config.Unused = volumes
 
-	targetNode := d.Get("target_node").(string)
-	//vmr, _ := client.GetVmRefByName(vmName)
+	config.Rootfs = d.Get("rootfs").(*schema.Set).List()[0].(map[string]interface{})
+	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
+	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
 
-	// get unique id
-	nextid, err := nextVmId(pconf)
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
-	}
-	vmr := pxapi.NewVmRef(nextid)
-	vmr.SetNode(targetNode)
-	err = config.CreateLxc(vmr, client)
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
+	if err = config.CreateVm(vm); err != nil {
+		goto End
 	}
 
-	// The existence of a non-blank ID is what tells Terraform that a resource was created
-	d.SetId(resourceId(targetNode, "lxc", vmr.VmId()))
+	// a non-blank ID tells Terraform that a resource was created
+	d.SetId(resourceId(vm))
 
-	return resourceLxcRead(d, meta)
+End:
+	pmParallelEnd(pconf)
+	return
 }
 
-func resourceLxcUpdate(d *schema.ResourceData, meta interface{}) error {
-	return resourceLxcRead(d, meta)
-}
+func resourceVmLxcRead(d *schema.ResourceData, meta interface{}) (err error) {
+	var (
+		vmid   int
+		vm     *pxapi.Vm
+		config *pxapi.ConfigLxc
+	)
 
-func resourceLxcRead(d *schema.ResourceData, meta interface{}) error {
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-	client := pconf.Client
-	_, _, vmID, err := parseResourceId(d.Id())
-	if err != nil {
-		pmParallelEnd(pconf)
+	pconf.Client.Set()
+
+	if _, _, vmid, err = parseResourceId(d.Id()); err != nil {
 		d.SetId("")
-		return err
+		goto End
 	}
-	vmr := pxapi.NewVmRef(vmID)
-	_, err = client.GetVmInfo(vmr)
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
+
+	vm = pxapi.NewVm(vmid)
+
+	if config, err = pxapi.NewConfigLxcFromApi(vm); err != nil {
+		d.SetId("")
+		goto End
 	}
-	config, err := pxapi.NewConfigLxcFromApi(vmr, client)
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
+
+	log.Println("DEBUG A")
+	printSet(d, "net")
+
+	d.SetId(resourceId(vm))
+
+	if err = d.Set("target_node", vm.Node().Name()); err != nil {
+		goto End
 	}
-	d.SetId(resourceId(vmr.Node(), "lxc", vmr.VmId()))
-	d.Set("target_node", vmr.Node())
+	if err = d.Set("arch", config.Arch); err != nil {
+		goto End
+	}
+	if err = d.Set("cmode", config.Cmode); err != nil {
+		goto End
+	}
+	if err = d.Set("console", config.Console); err != nil {
+		goto End
+	}
+	if err = d.Set("cores", config.Cores); err != nil {
+		goto End
+	}
+	if err = d.Set("cpuunits", config.Cpuunits); err != nil {
+		goto End
+	}
+	if err = d.Set("description", config.Description); err != nil {
+		goto End
+	}
+	if err = d.Set("hostname", config.Hostname); err != nil {
+		goto End
+	}
+	if err = d.Set("memory", config.Memory); err != nil {
+		goto End
+	}
+	if err = d.Set("nameserver", config.Nameserver); err != nil {
+		goto End
+	}
+	if err = d.Set("onboot", config.Onboot); err != nil {
+		goto End
+	}
+	if err = d.Set("ostemplate", config.Ostemplate); err != nil {
+		goto End
+	}
+	if err = d.Set("ostype", config.Ostype); err != nil {
+		goto End
+	}
+	if err = d.Set("password", config.Password); err != nil {
+		goto End
+	}
+	if err = d.Set("searchdomain", config.Searchdomain); err != nil {
+		goto End
+	}
+	if err = d.Set("sshkeys", config.Sshkeys); err != nil {
+		goto End
+	}
+	if err = d.Set("startup", config.Startup); err != nil {
+		goto End
+	}
+	if err = d.Set("swap", config.Swap); err != nil {
+		goto End
+	}
+	if err = d.Set("tty", config.Tty); err != nil {
+		goto End
+	}
+	if err = d.Set("unprivileged", config.Unprivileged); err != nil {
+		goto End
+	}
 
-	d.Set("arch", config.Arch)
-	d.Set("bwlimit", config.BWLimit)
-	d.Set("cmode", config.CMode)
-	d.Set("console", config.Console)
-	d.Set("cores", config.Cores)
-	d.Set("cpulimit", config.CPULimit)
-	d.Set("cpuunits", config.CPUUnits)
-	d.Set("description", config.Description)
+	if err = d.Set("mp", updateDevicesSet(d.Get("mp").(*schema.Set), config.Mp)); err != nil {
+		goto End
+	}
+	if err = d.Set("net", updateDevicesSet(d.Get("net").(*schema.Set), config.Net)); err != nil {
+		goto End
+	}
+	err = d.Set("rootfs", updateDeviceSet(d.Get("rootfs").(*schema.Set), config.Rootfs))
 
-	defaultFeatures := d.Get("features").(*schema.Set)
-	featuresWithDefaults := UpdateDeviceConfDefaults(config.Features, defaultFeatures)
-	d.Set("features", featuresWithDefaults)
+	log.Println("DEBUG B")
+	printSet(d, "net")
 
-	d.Set("force", config.Force)
-	d.Set("hookscript", config.Hookscript)
-	d.Set("hostname", config.Hostname)
-	d.Set("ignore_unpack_errors", config.IgnoreUnpackErrors)
-	d.Set("lock", config.Lock)
-	d.Set("memory", config.Memory)
-
-	configMountpointSet := d.Get("mountpoint").(*schema.Set)
-	activeMountpointSet := UpdateDevicesSet(configMountpointSet, config.Mountpoints)
-	d.Set("mountpoint", activeMountpointSet)
-
-	d.Set("nameserver", config.Nameserver)
-
-	configNetworksSet := d.Get("network").(*schema.Set)
-	activeNetworksSet := UpdateDevicesSet(configNetworksSet, config.Networks)
-	d.Set("network", activeNetworksSet)
-
-	d.Set("onboot", config.OnBoot)
-	d.Set("ostemplate", config.Ostemplate)
-	d.Set("ostype", config.OsType)
-	d.Set("password", config.Password)
-	d.Set("pool", config.Pool)
-	d.Set("protection", config.Protection)
-	d.Set("restore", config.Restore)
-	d.Set("rootfs", config.RootFs)
-	d.Set("searchdomain", config.SearchDomain)
-	d.Set("ssh_public_keys", config.SSHPublicKeys)
-	d.Set("start", config.Start)
-	d.Set("startup", config.Startup)
-	d.Set("storage", config.Storage)
-	d.Set("swap", config.Swap)
-	d.Set("template", config.Template)
-	d.Set("tty", config.Tty)
-	d.Set("unique", config.Unique)
-	d.Set("unprivileged", config.Unprivileged)
-	d.Set("unused", config.Unused)
-
+End:
 	pmParallelEnd(pconf)
-	return nil
+	return
 }
 
-func resourceLxcDelete(d *schema.ResourceData, meta interface{}) error {
-	return nil
+func resourceVmLxcUpdate(d *schema.ResourceData, meta interface{}) (err error) {
+	var (
+		vmid   int
+		vm     *pxapi.Vm
+		config *pxapi.ConfigLxc
+	)
+
+	pconf := meta.(*providerConfiguration)
+	pmParallelBegin(pconf)
+	pconf.Client.Set()
+
+	if _, _, vmid, err = parseResourceId(d.Id()); err != nil {
+		d.SetId("")
+		goto End
+	}
+
+	vm = pxapi.NewVm(vmid)
+
+	if config, err = pxapi.NewConfigLxcFromApi(vm); err != nil {
+		d.SetId("")
+		goto End
+	}
+
+	config.Ostemplate = d.Get("ostemplate").(string)
+	config.Arch = d.Get("arch").(string)
+	config.Cmode = d.Get("cmode").(string)
+	config.Console = d.Get("console").(bool)
+	config.Cores = d.Get("cores").(int)
+	config.Cpuunits = d.Get("cpuunits").(int)
+	config.Description = d.Get("description").(string)
+	config.Hostname = d.Get("hostname").(string)
+	config.Memory = d.Get("memory").(int)
+	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
+	config.Nameserver = d.Get("nameserver").(string)
+	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
+	config.Onboot = d.Get("onboot").(bool)
+	config.Ostype = d.Get("ostype").(string)
+	config.Ostemplate = d.Get("ostemplate").(string)
+	config.Password = d.Get("password").(string)
+	config.Protection = d.Get("protection").(bool)
+	config.Rootfs = d.Get("rootfs").(*schema.Set).List()[0].(map[string]interface{})
+	config.Searchdomain = d.Get("searchdomain").(string)
+	config.Startup = d.Get("startup").(string)
+	config.Sshkeys = d.Get("sshkeys").(string)
+	config.Startup = d.Get("startup").(string)
+	config.Swap = d.Get("swap").(int)
+	config.Tty = d.Get("tty").(int)
+	config.Unprivileged = d.Get("unprivileged").(bool)
+
+	err = config.UpdateConfig(vm)
+
+End:
+	pmParallelEnd(pconf)
+	return
+}
+
+// to debug nested sets
+func printSet(d *schema.ResourceData, s string) {
+	set := d.Get(s).(*schema.Set)
+
+	log.Println("DEBUG: printSet -- " + s + " has len " + strconv.Itoa(set.Len()))
+
+	for id, conf := range set.List() {
+		log.Println("element " + strconv.Itoa(id) + " has type :")
+		log.Println(reflect.TypeOf(conf))
+
+		s, err := json.MarshalIndent(conf, "", "  ")
+		if err != nil {
+			log.Println("error:", err)
+		}
+		log.Println("the contents of element " + strconv.Itoa(id) + " are " + string(s))
+	}
+}
+
+// to debug non nested sets
+func printMap(m pxapi.VmDevices) {
+	log.Println("DEBUG: printMap -- ")
+	s, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		log.Println("error:", err)
+	}
+	log.Println("the contents are " + string(s))
 }

@@ -18,7 +18,7 @@ func resourceVmQemu() *schema.Resource {
 		Create: resourceVmQemuCreate,
 		Read:   resourceVmQemuRead,
 		Update: resourceVmQemuUpdate,
-		Delete: resourceVmQemuDelete,
+		Delete: ResourceVmDelete,
 		Importer: &schema.ResourceImporter{
 			State: schema.ImportStatePassthrough,
 		},
@@ -296,8 +296,6 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	pconf.Client.Set()
 
 	vmName := d.Get("name").(string)
-	networks := d.Get("network").(*schema.Set)
-	qemuNetworks := DevicesSetToMap(networks)
 	disks := d.Get("disk").(*schema.Set)
 	qemuDisks := DevicesSetToMap(disks)
 
@@ -429,53 +427,136 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 	return nil
 }
 
-func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
+func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) (err error) {
+	var (
+		vmid   int
+		vm     *pxapi.Vm
+		config *pxapi.ConfigQemu
+	)
+
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-
 	pconf.Client.Set()
 
-	_, _, vmID, err := parseResourceId(d.Id())
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
+	if _, _, vmid, err = parseResourceId(d.Id()); err != nil {
+		d.SetId("")
+		goto End
 	}
 
-	vm := pxapi.NewVm(vmID)
-	if err = vm.Check(); err != nil {
-		pmParallelEnd(pconf)
-		return err
-	}
-	configDisksSet := d.Get("disk").(*schema.Set)
-	qemuDisks := DevicesSetToMap(configDisksSet)
-	configNetworksSet := d.Get("network").(*schema.Set)
-	qemuNetworks := DevicesSetToMap(configNetworksSet)
+	vm = pxapi.NewVm(vmid)
 
-	config := pxapi.ConfigQemu{
-		Name:        d.Get("name").(string),
-		Description: d.Get("desc").(string),
-		Onboot:      d.Get("onboot").(bool),
-		Agent:       d.Get("agent").(string),
-		Memory:      d.Get("memory").(int),
-		Cores:       d.Get("cores").(int),
-		Sockets:     d.Get("sockets").(int),
-		Ostype:      d.Get("ostype").(string),
-		Net:         devicesSetToMap(d.Get("net").(*schema.Set)),
-		Disk:        qemuDisks,
-		// Cloud-init.
-		CIuser:       d.Get("ciuser").(string),
-		CIpassword:   d.Get("cipassword").(string),
-		Searchdomain: d.Get("searchdomain").(string),
-		Nameserver:   d.Get("nameserver").(string),
-		Sshkeys:      d.Get("sshkeys").(string),
-		Ipconfig0:    d.Get("ipconfig0").(string),
-		Ipconfig1:    d.Get("ipconfig1").(string),
+	if config, err = pxapi.NewConfigQemuFromApi(vm); err != nil {
+		d.SetId("")
+		goto End
 	}
 
-	err = config.UpdateConfig(vm)
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
+	d.SetId(resourceId(vm))
+
+	if err = d.Set("target_node", vm.Node().Name()); err != nil {
+		goto End
+	}
+	if err = d.Set("name", config.Name); err != nil {
+		goto End
+	}
+	if err = d.Set("desc", config.Description); err != nil {
+		goto End
+	}
+	if err = d.Set("onboot", config.Onboot); err != nil {
+		goto End
+	}
+	if err = d.Set("agent", config.Agent); err != nil {
+		goto End
+	}
+	if err = d.Set("memory", config.Memory); err != nil {
+		goto End
+	}
+	if err = d.Set("cores", config.Cores); err != nil {
+		goto End
+	}
+	if err = d.Set("sockets", config.Sockets); err != nil {
+		goto End
+	}
+	if err = d.Set("ostype", config.Ostype); err != nil {
+		goto End
+	}
+	if err = d.Set("ciuser", config.CIuser); err != nil {
+		goto End
+	}
+	if err = d.Set("cipassword", config.CIpassword); err != nil {
+		goto End
+	}
+	if err = d.Set("searchdomain", config.Searchdomain); err != nil {
+		goto End
+	}
+	if err = d.Set("nameserver", config.Nameserver); err != nil {
+		goto End
+	}
+	if err = d.Set("sshkeys", config.Sshkeys); err != nil {
+		goto End
+	}
+	if err = d.Set("ipconfig0", config.Ipconfig0); err != nil {
+		goto End
+	}
+	if err = d.Set("ipconfig1", config.Ipconfig1); err != nil {
+		goto End
+	}
+
+	if err = d.Set("disk", updateDevicesSet(d.Get("disk").(*schema.Set), config.Disk)); err != nil {
+		goto End
+	}
+	err = d.Set("net", updateDevicesSet(d.Get("net").(*schema.Set), config.Net))
+
+End:
+	pmParallelEnd(pconf)
+	return
+}
+
+func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) {
+	var (
+		vmid      int
+		vm        *pxapi.Vm
+		config    *pxapi.ConfigQemu
+		qemuDisks pxapi.VmDevices
+	)
+
+	pconf := meta.(*providerConfiguration)
+	pmParallelBegin(pconf)
+	pconf.Client.Set()
+
+	if _, _, vmid, err = parseResourceId(d.Id()); err != nil {
+		d.SetId("")
+		goto End
+	}
+
+	vm = pxapi.NewVm(vmid)
+
+	if config, err = pxapi.NewConfigQemuFromApi(vm); err != nil {
+		d.SetId("")
+		goto End
+	}
+
+	config.Name = d.Get("name").(string)
+	config.Description = d.Get("desc").(string)
+	config.Onboot = d.Get("onboot").(bool)
+	config.Agent = d.Get("agent").(string)
+	config.Memory = d.Get("memory").(int)
+	config.Cores = d.Get("cores").(int)
+	config.Sockets = d.Get("sockets").(int)
+	config.Ostype = d.Get("ostype").(string)
+	config.CIuser = d.Get("ciuser").(string)
+	config.CIpassword = d.Get("cipassword").(string)
+	config.Searchdomain = d.Get("searchdomain").(string)
+	config.Nameserver = d.Get("nameserver").(string)
+	config.Sshkeys = d.Get("sshkeys").(string)
+	config.Ipconfig0 = d.Get("ipconfig0").(string)
+	config.Ipconfig1 = d.Get("ipconfig1").(string)
+
+	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
+	qemuDisks = devicesSetToMap(d.Get("disk").(*schema.Set))
+	config.Disk = qemuDisks
+
+	if err = config.UpdateConfig(vm); err != nil {
+		goto End
 	}
 
 	// give sometime to proxmox to catchup
@@ -487,18 +568,15 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 	time.Sleep(5 * time.Second)
 
 	// Start VM only if it wasn't running.
-	vmStatus, err := vm.GetStatus()
-	if err == nil && vmStatus["status"] == "stopped" {
+	if vmStatus, err := vm.GetStatus(); err == nil {
+		goto End
+	} else if vmStatus["status"] == "stopped" {
 		log.Print("[DEBUG] starting VM")
 		_, err = vm.Start()
-	} else if err != nil {
-		pmParallelEnd(pconf)
-		return err
 	}
 
-	err = initConnInfo(d, pconf, vm, &config)
-	if err != nil {
-		return err
+	if err = initConnInfo(d, pconf, vm, config); err != nil {
+		goto End
 	}
 
 	// Apply pre-provision if enabled.
@@ -506,95 +584,44 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) error {
 
 	// give sometime to bootup
 	time.Sleep(9 * time.Second)
-	return nil
-}
 
-func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) error {
-	pconf := meta.(*providerConfiguration)
-	pmParallelBegin(pconf)
-	pconf.Client.Set()
-
-	_, _, vmId, err := parseResourceId(d.Id())
-	if err != nil {
-		pmParallelEnd(pconf)
-		d.SetId("")
-		return err
-	}
-
-	vm := pxapi.NewVm(vmId)
-	if err = vm.Check(); err != nil {
-		pmParallelEnd(pconf)
-		return err
-	}
-
-	config, err := pxapi.NewConfigQemuFromApi(vm)
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
-	}
-
-	d.SetId(resourceId(vm))
-	d.Set("target_node", vm.Node().Name())
-	d.Set("name", config.Name)
-	d.Set("desc", config.Description)
-	d.Set("onboot", config.Onboot)
-	d.Set("agent", config.Agent)
-	d.Set("memory", config.Memory)
-	d.Set("cores", config.Cores)
-	d.Set("sockets", config.Sockets)
-	d.Set("ostype", config.Ostype)
-	// Cloud-init.
-	d.Set("ciuser", config.CIuser)
-	d.Set("cipassword", config.CIpassword)
-	d.Set("searchdomain", config.Searchdomain)
-	d.Set("nameserver", config.Nameserver)
-	d.Set("sshkeys", config.Sshkeys)
-	d.Set("ipconfig0", config.Ipconfig0)
-	d.Set("ipconfig1", config.Ipconfig1)
-
-	// Disks.
-	configDisksSet := d.Get("disk").(*schema.Set)
-	activeDisksSet := UpdateDevicesSet(configDisksSet, config.QemuDisks)
-	d.Set("disk", activeDisksSet)
-
-	// Networks.
-	configNetworksSet := d.Get("network").(*schema.Set)
-	activeNetworksSet := UpdateDevicesSet(configNetworksSet, config.QemuNetworks)
-	d.Set("network", activeNetworksSet)
-
+End:
 	pmParallelEnd(pconf)
 	return nil
 }
 
-func resourceVmQemuDelete(d *schema.ResourceData, meta interface{}) error {
+func ResourceVmDelete(d *schema.ResourceData, meta interface{}) (err error) {
+	var (
+		vmid int
+		vm   *pxapi.Vm
+	)
+
 	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-
 	pconf.Client.Set()
 
-	_, _, vmId, err := parseResourceId(d.Id())
-	if err != nil {
-		pmParallelEnd(pconf)
+	if _, _, vmid, err = parseResourceId(d.Id()); err != nil {
 		d.SetId("")
-		return err
+		goto End
 	}
 
-	vm := pxapi.NewVm(vmId)
+	vm = pxapi.NewVm(vmid)
+
 	if err = vm.Check(); err != nil {
-		pmParallelEnd(pconf)
-		return err
+		goto End
 	}
 
-	_, err = vm.Stop()
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
+	if _, err = vm.Stop(); err != nil {
+		goto End
 	}
+
 	// give sometime to proxmox to catchup
 	time.Sleep(2 * time.Second)
 	_, err = vm.Delete()
+
+End:
 	pmParallelEnd(pconf)
-	return err
+	return
 }
 
 // Increase disk size if original disk was smaller than new disk.
@@ -646,89 +673,6 @@ func diskSizeGB(dcSize interface{}) float64 {
 	return diskSize
 }
 
-// Converting from schema.TypeSet to map of id and conf for each device,
-// which will be sent to Proxmox API.
-func DevicesSetToMap(devicesSet *schema.Set) pxapi.QemuDevices {
-
-	devicesMap := pxapi.VmDevices{}
-
-	for _, set := range devicesSet.List() {
-		setMap, isMap := set.(map[string]interface{})
-		if isMap {
-			setID := setMap["id"].(int)
-			devicesMap[setID] = setMap
-		}
-	}
-	return devicesMap
-}
-
-// Update schema.TypeSet with new values comes from Proxmox API.
-// TODO: Maybe it's better to create a new Set instead add to current one.
-func UpdateDevicesSet(
-	devicesSet *schema.Set,
-	devicesMap pxapi.VmDevices,
-) *schema.Set {
-
-	configDevicesMap := DevicesSetToMap(devicesSet)
-
-	activeDevicesMap := updateDevicesDefaults(devicesMap, configDevicesMap)
-
-	for _, setConf := range devicesSet.List() {
-		devicesSet.Remove(setConf)
-		setConfMap := setConf.(map[string]interface{})
-		deviceID := setConfMap["id"].(int)
-		// Value type should be one of types allowed by Terraform schema types.
-		for key, value := range activeDevicesMap[deviceID] {
-			// This nested switch is used for nested config like in `net[n]`,
-			// where Proxmox uses `key=<0|1>` in string" at the same time
-			// a boolean could be used in ".tf" files.
-			switch setConfMap[key].(type) {
-			case bool:
-				switch value.(type) {
-				// If the key is bool and value is int (which comes from Proxmox API),
-				// should be converted to bool (as in ".tf" conf).
-				case int:
-					sValue := strconv.Itoa(value.(int))
-					bValue, err := strconv.ParseBool(sValue)
-					if err == nil {
-						setConfMap[key] = bValue
-					}
-				// If value is bool, which comes from Terraform conf, add it directly.
-				case bool:
-					setConfMap[key] = value
-				}
-			// Anything else will be added as it is.
-			default:
-				setConfMap[key] = value
-			}
-			devicesSet.Add(setConfMap)
-		}
-	}
-
-	return devicesSet
-}
-
-// Because default values are not stored in Proxmox, so the API returns only active values.
-// So to prevent Terraform doing unnecessary diffs, this function reads default values
-// from Terraform itself, and fill empty fields.
-func updateDevicesDefaults(
-	activeDevicesMap pxapi.VmDevices,
-	configDevicesMap pxapi.VmDevices,
-) pxapi.VmDevices {
-
-	for deviceID, deviceConf := range configDevicesMap {
-		if _, ok := activeDevicesMap[deviceID]; !ok {
-			activeDevicesMap[deviceID] = configDevicesMap[deviceID]
-		}
-		for key, value := range deviceConf {
-			if _, ok := activeDevicesMap[deviceID][key]; !ok {
-				activeDevicesMap[deviceID][key] = value
-			}
-		}
-	}
-	return activeDevicesMap
-}
-
 func initConnInfo(
 	d *schema.ResourceData,
 	pconf *providerConfiguration,
@@ -773,47 +717,5 @@ func initConnInfo(
 		"pm_password":     client.Password,
 		"pm_tls_insecure": "true", // TODO - pass pm_tls_insecure state around, but if we made it this far, default insecure
 	})
-	return nil
-}
-
-// Internal pre-provision.
-func preprovision(
-	d *schema.ResourceData,
-	pconf *providerConfiguration,
-	vm *pxapi.Vm,
-	systemPreProvision bool,
-) error {
-
-	if d.Get("preprovision").(bool) {
-
-		if systemPreProvision {
-			switch d.Get("os_type").(string) {
-
-			case "ubuntu":
-				// give sometime to bootup
-				time.Sleep(9 * time.Second)
-				err := preProvisionUbuntu(d)
-				if err != nil {
-					return err
-				}
-
-			case "centos":
-				// give sometime to bootup
-				time.Sleep(9 * time.Second)
-				err := preProvisionCentos(d)
-				if err != nil {
-					return err
-				}
-
-			case "cloud-init":
-				// wait for OS too boot awhile...
-				log.Print("[DEBUG] sleeping for OS bootup...")
-				time.Sleep(time.Duration(d.Get("ci_wait").(int)) * time.Second)
-
-			default:
-				return fmt.Errorf("Unknown os_type: %s", d.Get("os_type").(string))
-			}
-		}
-	}
 	return nil
 }

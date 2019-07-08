@@ -1,5 +1,7 @@
 *~*
 *.bak
 *.vim
-.terraform
+.terraform*
+terraform*
 crash.log
+*.tfstate

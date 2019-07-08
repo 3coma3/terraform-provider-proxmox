@@ -13,8 +13,8 @@ build: clean
 
 install: clean
 	@echo " -> Installing"
-	go install github.com/Telmate/terraform-provider-proxmox/cmd/terraform-provider-proxmox
-	go install github.com/Telmate/terraform-provider-proxmox/cmd/terraform-provisioner-proxmox
+	go install github.com/3coma3/terraform-provider-proxmox/cmd/terraform-provider-proxmox
+	go install github.com/3coma3/terraform-provider-proxmox/cmd/terraform-provisioner-proxmox
 
 clean:
 	@git clean -f -d -X

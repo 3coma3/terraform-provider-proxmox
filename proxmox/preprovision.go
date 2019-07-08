@@ -3,6 +3,8 @@ package proxmox
 import (
 	"fmt"
 
+	pxapi "github.com/3coma3/proxmox-api-go/proxmox"
+
 	"github.com/hashicorp/terraform/communicator"
 	"github.com/hashicorp/terraform/communicator/remote"
 	"github.com/hashicorp/terraform/helper/schema"
@@ -182,3 +184,45 @@ func runCommand(
 // 		o.Output(line)
 // 	}
 // }
+
+// Internal pre-provision.
+func preprovision(
+	d *schema.ResourceData,
+	pconf *providerConfiguration,
+	vm *pxapi.Vm,
+	systemPreProvision bool,
+) error {
+
+	if d.Get("preprovision").(bool) {
+
+		if systemPreProvision {
+			switch d.Get("os_type").(string) {
+
+			case "ubuntu":
+				// give sometime to bootup
+				time.Sleep(9 * time.Second)
+				err := preProvisionUbuntu(d)
+				if err != nil {
+					return err
+				}
+
+			case "centos":
+				// give sometime to bootup
+				time.Sleep(9 * time.Second)
+				err := preProvisionCentos(d)
+				if err != nil {
+					return err
+				}
+
+			case "cloud-init":
+				// wait for OS too boot awhile...
+				log.Print("[DEBUG] sleeping for OS bootup...")
+				time.Sleep(time.Duration(d.Get("ci_wait").(int)) * time.Second)
+
+			default:
+				return fmt.Errorf("Unknown os_type: %s", d.Get("os_type").(string))
+			}
+		}
+	}
+	return nil
+}
