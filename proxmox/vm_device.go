@@ -1,6 +1,7 @@
 package proxmox
 
 import (
+	"encoding/json"
 	pxapi "github.com/3coma3/proxmox-api-go/proxmox"
 	"github.com/hashicorp/terraform/helper/schema"
 	"strconv"
@@ -19,12 +20,12 @@ func devicesSetToMap(devicesSet *schema.Set) pxapi.VmDevices {
 	return apiDevicesMap
 }
 
-// update a schema.TypeSet with new values from map[int][string]interface{}
+// update a schema.TypeSet with new values from map[int]map[string]interface{}
 func updateDevicesSet(
 	terraDevicesSet *schema.Set,
 	apiDevicesMap pxapi.VmDevices,
 ) *schema.Set {
-	apiDevicesList := []interface{}{}
+	var apiDevicesList []interface{}
 
 	for id, conf := range terraDevicesSet.List() {
 		confMap := conf.(map[string]interface{})
@@ -42,7 +43,8 @@ func updateDevicesSet(
 
 		// update the tf state with the fresh api data
 		for k, v := range apiDevicesMap[id] {
-			// ignore fields from the api map that don't exist in the tf config
+			// ignore fields from the api map that don't exist in the schema
+			// FIXME: this might not be working correctly as is
 			if _, ok := confMap[k]; !ok {
 				continue
 			}
@@ -62,7 +64,17 @@ func updateDevicesSet(
 		apiDevicesList = append(apiDevicesList, confMap)
 	}
 
-	return schema.NewSet(func(interface{}) int { return 0 }, apiDevicesList)
+	// this callback returns an identity token for members of the set
+	var hashFunc = func(i interface{}) int {
+		if id := i.(map[string]interface{})["id"]; id != nil {
+			return id.(int)
+		} else {
+			b, _ := json.MarshalIndent(i, "", "")
+			return schema.HashString(string(b))
+		}
+	}
+
+	return schema.NewSet(hashFunc, apiDevicesList)
 }
 
 // update a schema.TypeSet with new values from map[string]interface{}
