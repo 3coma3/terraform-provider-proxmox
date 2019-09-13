@@ -7,6 +7,7 @@ import (
 	"log"
 	"reflect"
 	"strconv"
+	"time"
 )
 
 func resourceVmLxc() *schema.Resource {
@@ -355,6 +356,13 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 
 	if err = config.CreateVm(vm); err != nil {
 		goto End
+	}
+
+	// give sometime to proxmox to catchup
+	time.Sleep(5 * time.Second)
+
+	if err != nil {
+		log.Println("ERR IS NOT NIL AT THE END OF CREATE")
 	}
 
 	// a non-blank ID tells Terraform that a resource was created
