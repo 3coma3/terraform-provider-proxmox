@@ -370,7 +370,7 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 
 End:
 	pmParallelEnd(pconf)
-	return
+	return resourceVmLxcRead(d, meta)
 }
 
 func resourceVmLxcRead(d *schema.ResourceData, meta interface{}) (err error) {
@@ -531,7 +531,7 @@ func resourceVmLxcUpdate(d *schema.ResourceData, meta interface{}) (err error) {
 
 End:
 	pmParallelEnd(pconf)
-	return
+	return resourceVmLxcRead(d, meta)
 }
 
 // to debug nested sets
