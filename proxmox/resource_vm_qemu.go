@@ -87,8 +87,9 @@ func resourceVmQemu() *schema.Resource {
 				Default:  1,
 			},
 			"net": &schema.Schema{
-				Type:     schema.TypeSet,
-				Optional: true,
+				Type:       schema.TypeSet,
+				Optional:   true,
+				ConfigMode: schema.SchemaConfigModeAttr,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
 						"id": {
@@ -103,12 +104,7 @@ func resourceVmQemu() *schema.Resource {
 							// TODO: Find a way to set MAC address in .tf config.
 							Type:     schema.TypeString,
 							Optional: true,
-							DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
-								if new == "" {
-									return true // macaddr auto-generates and its ok
-								}
-								return strings.TrimSpace(old) == strings.TrimSpace(new)
-							},
+							Computed: true,
 						},
 						"bridge": {
 							Type:     schema.TypeString,
