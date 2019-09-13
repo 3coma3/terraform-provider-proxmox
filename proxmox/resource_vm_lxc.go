@@ -264,7 +264,7 @@ func resourceVmLxc() *schema.Resource {
 				Optional: true,
 			},
 			"start": {
-				Type:     schema.TypeString,
+				Type:     schema.TypeBool,
 				Optional: true,
 			},
 			"startup": {
@@ -342,8 +342,8 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 	config.Password = d.Get("password").(string)
 	config.Protection = d.Get("protection").(bool)
 	config.Searchdomain = d.Get("searchdomain").(string)
-	config.Startup = d.Get("startup").(string)
 	config.Sshkeys = d.Get("sshkeys").(string)
+	config.Start = d.Get("start").(bool)
 	config.Startup = d.Get("startup").(string)
 	config.Swap = d.Get("swap").(int)
 	config.Tty = d.Get("tty").(int)
