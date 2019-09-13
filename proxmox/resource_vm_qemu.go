@@ -91,15 +91,15 @@ func resourceVmQemu() *schema.Resource {
 				Optional: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
-						"id": &schema.Schema{
+						"id": {
 							Type:     schema.TypeInt,
 							Required: true,
 						},
-						"model": &schema.Schema{
+						"model": {
 							Type:     schema.TypeString,
 							Required: true,
 						},
-						"macaddr": &schema.Schema{
+						"macaddr": {
 							// TODO: Find a way to set MAC address in .tf config.
 							Type:     schema.TypeString,
 							Optional: true,
@@ -110,33 +110,33 @@ func resourceVmQemu() *schema.Resource {
 								return strings.TrimSpace(old) == strings.TrimSpace(new)
 							},
 						},
-						"bridge": &schema.Schema{
+						"bridge": {
 							Type:     schema.TypeString,
 							Optional: true,
 							Default:  "nat",
 						},
-						"tag": &schema.Schema{
+						"tag": {
 							Type:        schema.TypeInt,
 							Optional:    true,
 							Description: "VLAN tag.",
 							Default:     -1,
 						},
-						"firewall": &schema.Schema{
+						"firewall": {
 							Type:     schema.TypeBool,
 							Optional: true,
 							Default:  false,
 						},
-						"rate": &schema.Schema{
+						"rate": {
 							Type:     schema.TypeInt,
 							Optional: true,
 							Default:  -1,
 						},
-						"queues": &schema.Schema{
+						"queues": {
 							Type:     schema.TypeInt,
 							Optional: true,
 							Default:  -1,
 						},
-						"link_down": &schema.Schema{
+						"link_down": {
 							Type:     schema.TypeBool,
 							Optional: true,
 							Default:  false,

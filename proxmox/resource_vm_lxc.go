@@ -138,16 +138,18 @@ func resourceVmLxc() *schema.Resource {
 						"firewall": {
 							Type:     schema.TypeBool,
 							Optional: true,
+							Default:  false,
 						},
 						"gw": {
-							Type:     schema.TypeBool,
-							Optional: true,
-						},
-						"gw6": {
-							Type:     schema.TypeBool,
+							Type:     schema.TypeString,
 							Optional: true,
 						},
 						"hwaddr": {
+							Type:     schema.TypeString,
+							Optional: true,
+							Default:  "",
+						},
+						"gw6": {
 							Type:     schema.TypeString,
 							Optional: true,
 						},
@@ -166,18 +168,22 @@ func resourceVmLxc() *schema.Resource {
 						"rate": {
 							Type:     schema.TypeInt,
 							Optional: true,
+							Default:  0,
 						},
 						"tag": {
 							Type:     schema.TypeInt,
 							Optional: true,
+							Default:  0,
 						},
 						"trunks": {
 							Type:     schema.TypeString,
 							Optional: true,
+							Default:  "",
 						},
 						"type": {
 							Type:     schema.TypeString,
 							Optional: true,
+							Default:  "veth",
 						},
 					},
 				},
