@@ -401,71 +401,31 @@ func resourceVmLxcRead(d *schema.ResourceData, meta interface{}) (err error) {
 
 	d.SetId(resourceId(vm))
 
-	if err = d.Set("target_node", vm.Node().Name()); err != nil {
-		goto End
-	}
-	if err = d.Set("arch", config.Arch); err != nil {
-		goto End
-	}
-	if err = d.Set("cmode", config.Cmode); err != nil {
-		goto End
-	}
-	if err = d.Set("console", config.Console); err != nil {
-		goto End
-	}
-	if err = d.Set("cores", config.Cores); err != nil {
-		goto End
-	}
-	if err = d.Set("cpuunits", config.Cpuunits); err != nil {
-		goto End
-	}
-	if err = d.Set("description", config.Description); err != nil {
-		goto End
-	}
-	if err = d.Set("hostname", config.Hostname); err != nil {
-		goto End
-	}
-	if err = d.Set("memory", config.Memory); err != nil {
-		goto End
-	}
-	if err = d.Set("nameserver", config.Nameserver); err != nil {
-		goto End
-	}
-	if err = d.Set("onboot", config.Onboot); err != nil {
-		goto End
-	}
-	if err = d.Set("ostemplate", config.Ostemplate); err != nil {
-		goto End
-	}
-	if err = d.Set("ostype", config.Ostype); err != nil {
-		goto End
-	}
-	if err = d.Set("password", config.Password); err != nil {
-		goto End
-	}
-	if err = d.Set("searchdomain", config.Searchdomain); err != nil {
-		goto End
-	}
-	if err = d.Set("sshkeys", config.Sshkeys); err != nil {
-		goto End
-	}
-	if err = d.Set("startup", config.Startup); err != nil {
-		goto End
-	}
-	if err = d.Set("swap", config.Swap); err != nil {
-		goto End
-	}
-	if err = d.Set("tty", config.Tty); err != nil {
-		goto End
-	}
-	if err = d.Set("unprivileged", config.Unprivileged); err != nil {
-		goto End
-	}
+	d.Set("target_node", vm.Node().Name())
+	d.Set("arch", config.Arch)
+	d.Set("cmode", config.Cmode)
+	d.Set("console", config.Console)
+	d.Set("cores", config.Cores)
+	d.Set("cpuunits", config.Cpuunits)
+	d.Set("description", config.Description)
+	d.Set("hostname", config.Hostname)
+	d.Set("memory", config.Memory)
+	d.Set("nameserver", config.Nameserver)
+	d.Set("onboot", config.Onboot)
+	d.Set("ostemplate", config.Ostemplate)
+	d.Set("ostype", config.Ostype)
+	d.Set("password", config.Password)
+	d.Set("searchdomain", config.Searchdomain)
+	d.Set("sshkeys", config.Sshkeys)
+	d.Set("startup", config.Startup)
+	d.Set("swap", config.Swap)
+	d.Set("tty", config.Tty)
+	d.Set("unprivileged", config.Unprivileged)
 
-	if err = d.Set("mp", updateDevicesSet(d.Get("mp").(*schema.Set), config.Mp)); err != nil {
+	if err = d.Set("net", updateDevicesSet(d.Get("net").(*schema.Set), config.Net)); err != nil {
 		goto End
 	}
-	if err = d.Set("net", updateDevicesSet(d.Get("net").(*schema.Set), config.Net)); err != nil {
+	if err = d.Set("mp", updateDevicesSet(d.Get("mp").(*schema.Set), config.Mp)); err != nil {
 		goto End
 	}
 	err = d.Set("rootfs", updateDeviceSet(d.Get("rootfs").(*schema.Set), config.Rootfs))
@@ -510,15 +470,12 @@ func resourceVmLxcUpdate(d *schema.ResourceData, meta interface{}) (err error) {
 	config.Description = d.Get("description").(string)
 	config.Hostname = d.Get("hostname").(string)
 	config.Memory = d.Get("memory").(int)
-	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
 	config.Nameserver = d.Get("nameserver").(string)
-	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
 	config.Onboot = d.Get("onboot").(bool)
 	config.Ostype = d.Get("ostype").(string)
 	config.Ostemplate = d.Get("ostemplate").(string)
 	config.Password = d.Get("password").(string)
 	config.Protection = d.Get("protection").(bool)
-	config.Rootfs = d.Get("rootfs").(*schema.Set).List()[0].(map[string]interface{})
 	config.Searchdomain = d.Get("searchdomain").(string)
 	config.Startup = d.Get("startup").(string)
 	config.Sshkeys = d.Get("sshkeys").(string)
@@ -526,6 +483,10 @@ func resourceVmLxcUpdate(d *schema.ResourceData, meta interface{}) (err error) {
 	config.Swap = d.Get("swap").(int)
 	config.Tty = d.Get("tty").(int)
 	config.Unprivileged = d.Get("unprivileged").(bool)
+
+	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
+	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
+	config.Rootfs = d.Get("rootfs").(*schema.Set).List()[0].(map[string]interface{})
 
 	err = config.UpdateConfig(vm)
 

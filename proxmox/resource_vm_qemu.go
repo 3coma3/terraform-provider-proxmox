@@ -452,59 +452,27 @@ func resourceVmQemuRead(d *schema.ResourceData, meta interface{}) (err error) {
 
 	d.SetId(resourceId(vm))
 
-	if err = d.Set("target_node", vm.Node().Name()); err != nil {
-		goto End
-	}
-	if err = d.Set("name", config.Name); err != nil {
-		goto End
-	}
-	if err = d.Set("desc", config.Description); err != nil {
-		goto End
-	}
-	if err = d.Set("onboot", config.Onboot); err != nil {
-		goto End
-	}
-	if err = d.Set("agent", config.Agent); err != nil {
-		goto End
-	}
-	if err = d.Set("memory", config.Memory); err != nil {
-		goto End
-	}
-	if err = d.Set("cores", config.Cores); err != nil {
-		goto End
-	}
-	if err = d.Set("sockets", config.Sockets); err != nil {
-		goto End
-	}
-	if err = d.Set("ostype", config.Ostype); err != nil {
-		goto End
-	}
-	if err = d.Set("ciuser", config.CIuser); err != nil {
-		goto End
-	}
-	if err = d.Set("cipassword", config.CIpassword); err != nil {
-		goto End
-	}
-	if err = d.Set("searchdomain", config.Searchdomain); err != nil {
-		goto End
-	}
-	if err = d.Set("nameserver", config.Nameserver); err != nil {
-		goto End
-	}
-	if err = d.Set("sshkeys", config.Sshkeys); err != nil {
-		goto End
-	}
-	if err = d.Set("ipconfig0", config.Ipconfig0); err != nil {
-		goto End
-	}
-	if err = d.Set("ipconfig1", config.Ipconfig1); err != nil {
-		goto End
-	}
+	d.Set("target_node", vm.Node().Name())
+	d.Set("name", config.Name)
+	d.Set("desc", config.Description)
+	d.Set("onboot", config.Onboot)
+	d.Set("agent", config.Agent)
+	d.Set("memory", config.Memory)
+	d.Set("cores", config.Cores)
+	d.Set("sockets", config.Sockets)
+	d.Set("ostype", config.Ostype)
+	d.Set("ciuser", config.CIuser)
+	d.Set("cipassword", config.CIpassword)
+	d.Set("searchdomain", config.Searchdomain)
+	d.Set("nameserver", config.Nameserver)
+	d.Set("sshkeys", config.Sshkeys)
+	d.Set("ipconfig0", config.Ipconfig0)
+	d.Set("ipconfig1", config.Ipconfig1)
 
-	if err = d.Set("disk", updateDevicesSet(d.Get("disk").(*schema.Set), config.Disk)); err != nil {
+	if err = d.Set("net", updateDevicesSet(d.Get("net").(*schema.Set), config.Net)); err != nil {
 		goto End
 	}
-	err = d.Set("net", updateDevicesSet(d.Get("net").(*schema.Set), config.Net))
+	err = d.Set("disk", updateDevicesSet(d.Get("disk").(*schema.Set), config.Disk))
 
 End:
 	pmParallelEnd(pconf)
