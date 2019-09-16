@@ -293,7 +293,7 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
 
 	vmName := d.Get("name").(string)
 	disks := d.Get("disk").(*schema.Set)
-	qemuDisks := DevicesSetToMap(disks)
+	qemuDisks := devicesSetToMap(disks)
 
 	config := pxapi.ConfigQemu{
 		Name:        vmName,
