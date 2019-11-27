@@ -277,148 +277,135 @@ func resourceVmQemu() *schema.Resource {
 				Default:       true,
 				ConflictsWith: []string{"ssh_forward_ip", "ssh_user", "ssh_private_key", "preprovision_ostype", "preprovision_netconfig"},
 			},
+			"status": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 		},
 	}
 }
 
 var rxIPconfig = regexp.MustCompile("ip6?=([0-9a-fA-F:\\.]+)")
 
-func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) error {
-	pconf := meta.(*providerConfiguration)
-	pmParallelBegin(pconf)
+func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) {
+	var (
+		vmid      int
+		vm, src   *pxapi.Vm
+		node      *pxapi.Node
+		qemuDisks = devicesSetToMap(d.Get("disk").(*schema.Set))
+		config    = &pxapi.ConfigQemu{
+			Name:        d.Get("name").(string),
+			Description: d.Get("desc").(string),
+			Onboot:      d.Get("onboot").(bool),
+			Agent:       d.Get("agent").(string),
+			Ostype:      d.Get("ostype").(string),
+			Memory:      d.Get("memory").(int),
+			Cores:       d.Get("cores").(int),
+			Sockets:     d.Get("sockets").(int),
+			Iso:         d.Get("iso").(string),
 
-	// TODO: check interaction with mutex
-	// beware this might mean needing to go back to explicit client passing
+			// Cloud-init.
+			CIuser:       d.Get("ciuser").(string),
+			CIpassword:   d.Get("cipassword").(string),
+			Searchdomain: d.Get("searchdomain").(string),
+			Nameserver:   d.Get("nameserver").(string),
+			Sshkeys:      d.Get("sshkeys").(string),
+			Ipconfig0:    d.Get("ipconfig0").(string),
+			Ipconfig1:    d.Get("ipconfig1").(string),
+			Disk:         qemuDisks,
+			Net:          devicesSetToMap(d.Get("net").(*schema.Set)),
+		}
+		newstatus = d.Get("status").(string)
+		pconf     = meta.(*providerConfiguration)
+	)
+
+	pmParallelBegin(pconf)
+	// TODO: check interaction with mutex, beware this might mean going back to
+	// explicit client passing
 	pconf.Client.Set()
 
-	vmName := d.Get("name").(string)
-	disks := d.Get("disk").(*schema.Set)
-	qemuDisks := devicesSetToMap(disks)
-
-	config := pxapi.ConfigQemu{
-		Name:        vmName,
-		Description: d.Get("desc").(string),
-		Onboot:      d.Get("onboot").(bool),
-		Agent:       d.Get("agent").(string),
-		Ostype:      d.Get("ostype").(string),
-		Memory:      d.Get("memory").(int),
-		Cores:       d.Get("cores").(int),
-		Sockets:     d.Get("sockets").(int),
-		Net:         devicesSetToMap(d.Get("net").(*schema.Set)),
-		Disk:        qemuDisks,
-		// Cloud-init.
-		CIuser:       d.Get("ciuser").(string),
-		CIpassword:   d.Get("cipassword").(string),
-		Searchdomain: d.Get("searchdomain").(string),
-		Nameserver:   d.Get("nameserver").(string),
-		Sshkeys:      d.Get("sshkeys").(string),
-		Ipconfig0:    d.Get("ipconfig0").(string),
-		Ipconfig1:    d.Get("ipconfig1").(string),
-	}
 	log.Print("[DEBUG] checking for duplicate name")
-	dupVm, _ := pxapi.FindVm(vmName)
+	vm, _ = pxapi.FindVm(config.Name)
 
-	forceCreate := d.Get("force_create").(bool)
-	targetNode := d.Get("target_node").(string)
+	if vm != nil {
+		if !d.Get("force_create").(bool) {
+			err = fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=true to recycle", config.Name, vm.Id())
+			goto End
+		}
 
-	if dupVm != nil && forceCreate {
-		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=false to recycle", vmName, dupVm.Id())
-	} else if dupVm != nil && dupVm.Node().Name() != targetNode {
-		pmParallelEnd(pconf)
-		return fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", vmName, dupVm.Id(), dupVm.Node())
+		if vm.Node().Name() != node.Name() {
+			err = fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", config.Name, vm.Id(), vm.Node())
+			goto End
+		}
 	}
 
-	vm := dupVm
+	if vmid, err = nextVmId(pconf); err != nil {
+		goto End
+	}
+	vm = pxapi.NewVm(vmid)
 
-	if vm == nil {
-		// get unique id
-		nextid, err := nextVmId(pconf)
-		if err != nil {
-			pmParallelEnd(pconf)
-			return err
+	if node, err = pxapi.FindNode(d.Get("target_node").(string)); err != nil {
+		goto End
+	}
+	vm.SetNode(node)
+
+	// check if ISO or clone
+	if d.Get("clone").(string) != "" {
+		if src, err = pxapi.FindVm(d.Get("clone").(string)); err != nil {
+			goto End
 		}
-		vm = pxapi.NewVm(nextid)
+		log.Print("[DEBUG] cloning VM")
 
-		n, _ := pxapi.FindNode(targetNode)
-		vm.SetNode(n)
-
-		// check if ISO or clone
-		if d.Get("clone").(string) != "" {
-			sourceVm, err := pxapi.FindVm(d.Get("clone").(string))
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-			log.Print("[DEBUG] cloning VM")
-
-			cloneParams := map[string]interface{}{}
-
-			_, err = sourceVm.Clone(vm.Id(), cloneParams)
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-
-			// give sometime to proxmox to catchup
-			time.Sleep(5 * time.Second)
-
-			err = prepareDiskSize(vm, qemuDisks)
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-
-		} else if d.Get("iso").(string) != "" {
-			log.Print("[DEBUG] create VM from iso at node " + vm.Node().Name() + ", vmid " + strconv.Itoa(vm.Id()) + " type " + vm.Type())
-			config.Iso = d.Get("iso").(string)
-			err := config.CreateVm(vm)
-			if err != nil {
-				pmParallelEnd(pconf)
-				return err
-			}
-		} else {
-			return fmt.Errorf("Either clone or iso must be set")
+		cloneParams := map[string]interface{}{
+			"name": config.Name,
 		}
-	} else {
-		log.Printf("[DEBUG] recycling VM: %d", vm.Id())
 
-		vm.Stop()
-
-		err := config.UpdateConfig(vm)
-		if err != nil {
-			pmParallelEnd(pconf)
-			return err
+		if _, err = src.Clone(vm.Id(), cloneParams); err != nil {
+			goto End
 		}
 
 		// give sometime to proxmox to catchup
 		time.Sleep(5 * time.Second)
 
-		err = prepareDiskSize(vm, qemuDisks)
-		if err != nil {
-			pmParallelEnd(pconf)
-			return err
+		if err = prepareDiskSize(vm, qemuDisks); err != nil {
+			goto End
 		}
+
+	} else if config.Iso != "" {
+		log.Print("[DEBUG] create VM from iso at node " + vm.Node().Name() + ", vmid " + strconv.Itoa(vm.Id()) + " type " + vm.Type())
+		if err = config.CreateVm(vm); err != nil {
+			goto End
+		}
+	} else {
+		return fmt.Errorf("Either clone or iso must be set")
 	}
-	d.SetId(resourceId(vm))
 
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
 
-	log.Print("[DEBUG] starting VM")
-	_, err := vm.Start()
-	if err != nil {
-		pmParallelEnd(pconf)
-		return err
+	if newstatus != "" {
+		if _, err = vm.SetStatus(newstatus); err != nil {
+			goto End
+		}
 	}
 
-	err = initConnInfo(d, pconf, vm, &config)
-	if err != nil {
-		return err
+	if err = initConnInfo(d, pconf, vm, config); err != nil {
+		goto End
 	}
+
+	// a non-blank ID tells Terraform that a resource was created
+	d.SetId(resourceId(vm))
 
 	// Apply pre-provision if enabled.
 	preprovision(d, pconf, vm, true)
+
+End:
+	pmParallelEnd(pconf)
+
+	if d.Id() == "" {
+		log.Printf("An error ocurred at creation, and the resource Id is null, signaling destruction. Returning err now.")
+		return err
+	}
 
 	return resourceVmQemuRead(d, meta)
 }
@@ -481,10 +468,14 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 		vm        *pxapi.Vm
 		config    *pxapi.ConfigQemu
 		qemuDisks pxapi.VmDevices
+
+		pconf     = meta.(*providerConfiguration)
+		newstatus = d.Get("status").(string)
 	)
 
-	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
+	// TODO: check interaction with mutex
+	// beware this might mean needing to go back to explicit client passing
 	pconf.Client.Set()
 
 	if _, _, vmid, err = parseResourceId(d.Id()); err != nil {
@@ -515,9 +506,9 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 	config.Ipconfig0 = d.Get("ipconfig0").(string)
 	config.Ipconfig1 = d.Get("ipconfig1").(string)
 
-	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
 	qemuDisks = devicesSetToMap(d.Get("disk").(*schema.Set))
 	config.Disk = qemuDisks
+	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
 
 	if err = config.UpdateConfig(vm); err != nil {
 		goto End
@@ -531,12 +522,10 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
 
-	// Start VM only if it wasn't running.
-	if vmStatus, err := vm.GetStatus(); err == nil {
-		goto End
-	} else if vmStatus["status"] == "stopped" {
-		log.Print("[DEBUG] starting VM")
-		_, err = vm.Start()
+	if newstatus != "" {
+		if _, err = vm.SetStatus(newstatus); err != nil {
+			goto End
+		}
 	}
 
 	if err = initConnInfo(d, pconf, vm, config); err != nil {
@@ -551,6 +540,12 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 
 End:
 	pmParallelEnd(pconf)
+
+	if d.Id() == "" {
+		log.Printf("An error ocurred at update. Returning err now.")
+		return err
+	}
+
 	return resourceVmQemuRead(d, meta)
 }
 

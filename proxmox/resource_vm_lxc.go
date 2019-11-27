@@ -2,6 +2,7 @@ package proxmox
 
 import (
 	"encoding/json"
+	"fmt"
 	pxapi "github.com/3coma3/proxmox-api-go/proxmox"
 	"github.com/hashicorp/terraform/helper/schema"
 	"log"
@@ -264,9 +265,10 @@ func resourceVmLxc() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"start": {
-				Type:     schema.TypeBool,
+			"status": {
+				Type:     schema.TypeString,
 				Optional: true,
+				Default:  "",
 			},
 			"startup": {
 				Type:     schema.TypeString,
@@ -305,27 +307,16 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 		vmid   int
 		vm     *pxapi.Vm
 		node   *pxapi.Node
-		config *pxapi.ConfigLxc
+		config = pxapi.NewConfigLxc()
+
+		pconf     = meta.(*providerConfiguration)
+		newstatus = d.Get("status").(string)
 	)
 
-	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
-
 	// TODO: check interaction with mutex
 	// beware this might mean needing to go back to explicit client passing
 	pconf.Client.Set()
-
-	if vmid, err = nextVmId(pconf); err != nil {
-		goto End
-	}
-	vm = pxapi.NewVm(vmid)
-
-	if node, err = pxapi.FindNode(d.Get("target_node").(string)); err != nil {
-		goto End
-	}
-	vm.SetNode(node)
-
-	config = pxapi.NewConfigLxc()
 
 	config.Hostname = d.Get("hostname").(string)
 	config.Ostemplate = d.Get("ostemplate").(string)
@@ -344,7 +335,6 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 	config.Protection = d.Get("protection").(bool)
 	config.Searchdomain = d.Get("searchdomain").(string)
 	config.Sshkeys = d.Get("sshkeys").(string)
-	config.Start = d.Get("start").(bool)
 	config.Startup = d.Get("startup").(string)
 	config.Swap = d.Get("swap").(int)
 	config.Tty = d.Get("tty").(int)
@@ -354,6 +344,31 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
 	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
 
+	log.Print("[DEBUG] checking for duplicate name")
+	vm, _ = pxapi.FindVm(config.Hostname)
+
+	if vm != nil {
+		if !d.Get("force_create").(bool) {
+			err = fmt.Errorf("Duplicate VM name (%s) with vmId: %d. Set force_create=true to recycle", config.Hostname, vm.Id())
+			goto End
+		}
+
+		if vm.Node().Name() != node.Name() {
+			err = fmt.Errorf("Duplicate VM name (%s) with vmId: %d on different target_node=%s", config.Hostname, vm.Id(), vm.Node())
+			goto End
+		}
+	}
+
+	if vmid, err = nextVmId(pconf); err != nil {
+		goto End
+	}
+	vm = pxapi.NewVm(vmid)
+
+	if node, err = pxapi.FindNode(d.Get("target_node").(string)); err != nil {
+		goto End
+	}
+	vm.SetNode(node)
+
 	if err = config.CreateVm(vm); err != nil {
 		goto End
 	}
@@ -361,8 +376,10 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 	// give sometime to proxmox to catchup
 	time.Sleep(5 * time.Second)
 
-	if err != nil {
-		log.Println("ERR IS NOT NIL AT THE END OF CREATE")
+	if newstatus != "" {
+		if _, err = vm.SetStatus(newstatus); err != nil {
+			goto End
+		}
 	}
 
 	// a non-blank ID tells Terraform that a resource was created
@@ -370,6 +387,12 @@ func resourceVmLxcCreate(d *schema.ResourceData, meta interface{}) (err error) {
 
 End:
 	pmParallelEnd(pconf)
+
+	if d.Id() == "" {
+		log.Printf("An error ocurred at creation, and the resource Id is null, signaling destruction. Returning err now.")
+		return err
+	}
+
 	return resourceVmLxcRead(d, meta)
 }
 
@@ -443,10 +466,14 @@ func resourceVmLxcUpdate(d *schema.ResourceData, meta interface{}) (err error) {
 		vmid   int
 		vm     *pxapi.Vm
 		config *pxapi.ConfigLxc
+
+		pconf     = meta.(*providerConfiguration)
+		newstatus = d.Get("status").(string)
 	)
 
-	pconf := meta.(*providerConfiguration)
 	pmParallelBegin(pconf)
+	// TODO: check interaction with mutex
+	// beware this might mean needing to go back to explicit client passing
 	pconf.Client.Set()
 
 	if _, _, vmid, err = parseResourceId(d.Id()); err != nil {
@@ -477,21 +504,37 @@ func resourceVmLxcUpdate(d *schema.ResourceData, meta interface{}) (err error) {
 	config.Password = d.Get("password").(string)
 	config.Protection = d.Get("protection").(bool)
 	config.Searchdomain = d.Get("searchdomain").(string)
-	config.Startup = d.Get("startup").(string)
 	config.Sshkeys = d.Get("sshkeys").(string)
 	config.Startup = d.Get("startup").(string)
 	config.Swap = d.Get("swap").(int)
 	config.Tty = d.Get("tty").(int)
 	config.Unprivileged = d.Get("unprivileged").(bool)
 
-	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
-	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
 	config.Rootfs = d.Get("rootfs").(*schema.Set).List()[0].(map[string]interface{})
+	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
+	config.Net = devicesSetToMap(d.Get("net").(*schema.Set))
 
-	err = config.UpdateConfig(vm)
+	if err = config.UpdateConfig(vm); err != nil {
+		goto End
+	}
+
+	// give sometime to proxmox to catchup
+	time.Sleep(5 * time.Second)
+
+	if newstatus != "" {
+		if _, err = vm.SetStatus(newstatus); err != nil {
+			goto End
+		}
+	}
 
 End:
 	pmParallelEnd(pconf)
+
+	if d.Id() == "" {
+		log.Printf("An error ocurred at update. Returning err now.")
+		return err
+	}
+
 	return resourceVmLxcRead(d, meta)
 }
 
