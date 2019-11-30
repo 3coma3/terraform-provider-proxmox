@@ -508,7 +508,6 @@ func resourceVmLxcUpdate(d *schema.ResourceData, meta interface{}) (err error) {
 	config.Startup = d.Get("startup").(string)
 	config.Swap = d.Get("swap").(int)
 	config.Tty = d.Get("tty").(int)
-	config.Unprivileged = d.Get("unprivileged").(bool)
 
 	config.Rootfs = d.Get("rootfs").(*schema.Set).List()[0].(map[string]interface{})
 	config.Mp = devicesSetToMap(d.Get("mp").(*schema.Set))
