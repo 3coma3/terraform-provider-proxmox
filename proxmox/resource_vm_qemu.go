@@ -48,7 +48,7 @@ func resourceVmQemu() *schema.Resource {
 			"agent": {
 				Type:     schema.TypeString,
 				Optional: true,
-				Default:  0,
+				Default:  "1",
 			},
 			"iso": {
 				Type:     schema.TypeString,
@@ -397,7 +397,7 @@ func resourceVmQemuCreate(d *schema.ResourceData, meta interface{}) (err error) 
 	d.SetId(resourceId(vm))
 
 	// Apply pre-provision if enabled.
-	preprovision(d, pconf, vm, true)
+	// preprovision(d, pconf, vm, true)
 
 End:
 	pmParallelEnd(pconf)
@@ -533,7 +533,7 @@ func resourceVmQemuUpdate(d *schema.ResourceData, meta interface{}) (err error) 
 	}
 
 	// Apply pre-provision if enabled.
-	preprovision(d, pconf, vm, false)
+	// preprovision(d, pconf, vm, false)
 
 	// give sometime to bootup
 	time.Sleep(9 * time.Second)
@@ -570,7 +570,7 @@ func ResourceVmDelete(d *schema.ResourceData, meta interface{}) (err error) {
 		goto End
 	}
 
-	if _, err = vm.Stop(); err != nil {
+	if _, err = vm.Shutdown(); err != nil {
 		goto End
 	}
 
