@@ -6,8 +6,8 @@ import (
 	"time"
 
 	pxapi "github.com/3coma3/proxmox-api-go/proxmox"
-	"github.com/hashicorp/terraform/helper/schema"
-	"github.com/hashicorp/terraform/terraform"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/terraform"
 )
 
 // Provisioner - Terrafrom properties for proxmox-provisioner

@@ -5,9 +5,9 @@ import (
 
 	pxapi "github.com/3coma3/proxmox-api-go/proxmox"
 
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 	"github.com/hashicorp/terraform/communicator"
 	"github.com/hashicorp/terraform/communicator/remote"
-	"github.com/hashicorp/terraform/helper/schema"
 
 	"io"
 	"log"

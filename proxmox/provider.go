@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	pxapi "github.com/3coma3/proxmox-api-go/proxmox"
-	"github.com/hashicorp/terraform/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
 )
 
 type providerConfiguration struct {
